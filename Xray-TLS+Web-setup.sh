@@ -21,7 +21,7 @@ using_swap_now=0
 
 #安装信息
 nginx_version="nginx-1.19.6"
-openssl_version="openssl-openssl-3.0.0-alpha10"
+openssl_version="openssl-openssl-3.0.0-alpha11"
 nginx_prefix="/usr/local/nginx"
 nginx_config="${nginx_prefix}/conf.d/xray.conf"
 nginx_service="/etc/systemd/system/nginx.service"
@@ -37,7 +37,7 @@ cloudreve_prefix="/usr/local/cloudreve"
 cloudreve_service="/etc/systemd/system/cloudreve.service"
 cloudreve_is_installed=""
 
-nextcloud_url="https://download.nextcloud.com/server/prereleases/nextcloud-21.0.0beta6.zip"
+nextcloud_url="https://download.nextcloud.com/server/prereleases/nextcloud-21.0.0beta8.zip"
 
 xray_config="/usr/local/etc/xray/config.json"
 xray_is_installed=""
@@ -91,7 +91,7 @@ red()                              #姨妈红
 check_base_command()
 {
     local i
-    local temp_command_list=('bash' 'true' 'false' 'exit' 'echo' 'test' 'free' 'sort' 'sed' 'awk' 'grep' 'cut' 'cd' 'rm' 'cp' 'mv' 'head' 'tail' 'uname' 'tr' 'md5sum' 'tar' 'cat' 'find' 'type' 'command' 'kill' 'pkill' 'wc' 'ls')
+    local temp_command_list=('bash' 'true' 'false' 'exit' 'echo' 'test' 'free' 'sort' 'sed' 'awk' 'grep' 'cut' 'cd' 'rm' 'cp' 'mv' 'head' 'tail' 'uname' 'tr' 'md5sum' 'tar' 'cat' 'find' 'type' 'command' 'kill' 'pkill' 'wc' 'ls' 'mktemp')
     for i in ${!temp_command_list[@]}
     do
         if ! command -V "${temp_command_list[$i]}" > /dev/null; then
@@ -104,7 +104,7 @@ check_base_command()
 #版本比较函数
 version_ge()
 {
-    test "$(echo "$@" | tr " " "\\n" | sort -rV | head -n 1)" == "$1"
+    test "$(echo -e "$1\\n$2" | sort -rV | head -n 1)" == "$1"
 }
 #安装单个重要依赖
 check_important_dependence_installed()
@@ -116,7 +116,8 @@ check_important_dependence_installed()
             $debian_package_manager update
             if ! $debian_package_manager -y --no-install-recommends install "$1"; then
                 red "重要组件\"$1\"安装失败！！"
-                exit 1
+                yellow "按回车键继续或者Ctrl+c退出"
+                read -s
             fi
         fi
     else
@@ -128,7 +129,8 @@ check_important_dependence_installed()
             fi
         elif ! $redhat_package_manager -y install "$2"; then
             red "重要组件\"$2\"安装失败！！"
-            exit 1
+            yellow "按回车键继续或者Ctrl+c退出"
+            read -s
         fi
     fi
 }
@@ -141,7 +143,7 @@ install_dependence()
             if ! $debian_package_manager -y --no-install-recommends install "$@"; then
                 yellow "依赖安装失败！！"
                 green  "欢迎进行Bug report(https://github.com/kirin10000/Xray-script/issues)，感谢您的支持"
-                yellow "按回车键继续或者ctrl+c退出"
+                yellow "按回车键继续或者Ctrl+c退出"
                 read -s
             fi
         fi
@@ -152,7 +154,7 @@ install_dependence()
             local temp_redhat_install="$redhat_package_manager -y --enablerepo "
         fi
         if ! $redhat_package_manager -y install "$@"; then
-            if [ "$release" == "centos" ] && version_ge $systemVersion 8 && $temp_redhat_install"epel,PowerTools" install "$@";then
+            if [ "$release" == "centos" ] && version_ge "$systemVersion" 8 && $temp_redhat_install"epel,PowerTools" install "$@";then
                 return 0
             fi
             if $temp_redhat_install'*' install "$@"; then
@@ -160,7 +162,7 @@ install_dependence()
             fi
             yellow "依赖安装失败！！"
             green  "欢迎进行Bug report(https://github.com/kirin10000/Xray-script/issues)，感谢您的支持"
-            yellow "按回车键继续或者ctrl+c退出"
+            yellow "按回车键继续或者Ctrl+c退出"
             read -s
         fi
     fi
@@ -468,15 +470,21 @@ fi
 [ -e ${cloudreve_prefix}/cloudreve.db ] && cloudreve_is_installed=1 || cloudreve_is_installed=0
 [ -e /usr/local/bin/xray ] && xray_is_installed=1 || xray_is_installed=0
 ([ $xray_is_installed -eq 1 ] && [ $nginx_is_installed -eq 1 ]) && is_installed=1 || is_installed=0
-if [[ "$(uname -m)" =~ ^(amd64|x86_64)$ ]]; then
-    machine="amd64"
-elif [[ "$(uname -m)" =~ ^(armv8|aarch64)$ ]]; then
-    machine="arm64"
-elif [[ "$(uname -m)" =~ ^(armv5tel|armv6l|armv7|armv7l)$ ]] ;then
-    machine="arm"
-else
-    machine=""
-fi
+case "$(uname -m)" in
+    'amd64' | 'x86_64')
+        machine='amd64'
+        ;;
+    'armv5tel' | 'armv6l' | 'armv7' | 'armv7l')
+        machine='arm'
+        ;;
+    'armv8' | 'aarch64')
+        machine='arm64'
+        ;;
+    *)
+        machine=''
+        ;;
+esac
+
 mem="$(free -m | sed -n 2p | awk '{print $2}')"
 mem_total="$(($(free -m | sed -n 2p | awk '{print $2}')+$(free -m | tail -n 1 | awk '{print $2}')))"
 [[ "$(free -b | tail -n 1 | awk '{print $2}')" -ne "0" ]] && using_swap=1 || using_swap=0
@@ -489,26 +497,28 @@ fi
 #获取系统版本信息
 get_system_info()
 {
-    if lsb_release -a 2>/dev/null | grep -qi "ubuntu"; then
+    local temp_release
+    temp_release="$(lsb_release -i -s | tr "[:upper:]" "[:lower:]")"
+    if [[ "$temp_release" =~ ubuntu ]]; then
         release="ubuntu"
-    elif lsb_release -a 2>/dev/null | grep -qi "centos"; then
+    elif [[ "$temp_release" =~ centos ]]; then
         release="centos"
-    elif lsb_release -a 2>/dev/null | grep -qi "fedora"; then
+    elif [[ "$temp_release" =~ fedora ]]; then
         release="fedora"
     fi
-    systemVersion=$(lsb_release -r -s)
+    systemVersion="$(lsb_release -r -s)"
     if [ $release == "fedora" ]; then
-        if version_ge $systemVersion 30; then
+        if version_ge "$systemVersion" 30; then
             redhat_version=8
-        elif version_ge $systemVersion 19; then
+        elif version_ge "$systemVersion" 19; then
             redhat_version=7
-        elif version_ge $systemVersion 12; then
+        elif version_ge "$systemVersion" 12; then
             redhat_version=6
         else
             redhat_version=5
         fi
     else
-        redhat_version=$systemVersion
+        redhat_version="$systemVersion"
     fi
 }
 
@@ -665,6 +675,7 @@ uninstall_firewall()
     pkill -9 YDService
     pkill -9 YDLive
     pkill -9 sgagent
+    pkill -9 tat_agent
     pkill -9 /usr/local/qcloud
     pkill -9 barad_agent
     rm -rf /usr/local/qcloud
@@ -713,7 +724,7 @@ doupdate()
         yellow " 5.升级系统后以下配置可能会恢复系统默认配置："
         yellow "     ssh端口   ssh超时时间    bbr加速(恢复到关闭状态)"
         tyblue "----------------------------------------------------------"
-        green  " 您现在的系统版本是$systemVersion"
+        green  " 您现在的系统版本是"$systemVersion""
         tyblue "----------------------------------------------------------"
         echo
         choice=""
@@ -756,7 +767,7 @@ doupdate()
                     do-release-upgrade
                     ;;
             esac
-            if ! version_ge $systemVersion 20.04; then
+            if ! version_ge "$systemVersion" 20.04; then
                 sed -i 's/Prompt=lts/Prompt=normal/' /etc/update-manager/release-upgrades
                 do-release-upgrade
                 do-release-upgrade
@@ -815,91 +826,69 @@ install_bbr()
     get_kernel_info()
     {
         green "正在获取最新版本内核版本号。。。。(60内秒未获取成功自动跳过)"
-        local kernel_list
-        local kernel_list_temp
-        kernel_list_temp=($(timeout 60 wget -qO- https://kernel.ubuntu.com/~kernel-ppa/mainline/ | awk -F'\"v' '/v[0-9]/{print $2}' | cut -d '"' -f1 | cut -d '/' -f1 | sort -rV))
-        if [ ${#kernel_list_temp[@]} -le 1 ]; then
+        your_kernel_version="$(uname -r | cut -d - -f 1)"
+        while [ ${your_kernel_version##*.} -eq 0 ]
+        do
+            your_kernel_version=${your_kernel_version%.*}
+        done
+        if ! timeout 60 wget -O "temp_kernel_version" "https://kernel.ubuntu.com/~kernel-ppa/mainline/"; then
             latest_kernel_version="error"
-            your_kernel_version=$(uname -r | cut -d - -f 1)
             return 1
         fi
-        local i=0
+        local kernel_list=()
+        local kernel_list_temp
+        kernel_list_temp=($(awk -F'\"v' '/v[0-9]/{print $2}' "temp_kernel_version" | cut -d '"' -f1 | cut -d '/' -f1 | sort -rV))
+        if [ ${#kernel_list_temp[@]} -le 1 ]; then
+            latest_kernel_version="error"
+            return 1
+        fi
         local i2=0
-        local i3=0
+        local i3
         local kernel_rc=""
         local kernel_list_temp2
         while ((i2<${#kernel_list_temp[@]}))
         do
-            if [[ "${kernel_list_temp[i2]}" =~ "rc" ]] && [ "$kernel_rc" == "" ]; then
-                kernel_list_temp2[i3]="${kernel_list_temp[i2]}"
-                kernel_rc="${kernel_list_temp[i2]%%-*}"
-                ((i3++))
+            if [[ "${kernel_list_temp[$i2]}" =~ -rc(0|[1-9][0-9]*)$ ]] && [ "$kernel_rc" == "" ]; then
+                kernel_list_temp2=("${kernel_list_temp[$i2]}")
+                kernel_rc="${kernel_list_temp[$i2]%-*}"
                 ((i2++))
-            elif [[ "${kernel_list_temp[i2]}" =~ "rc" ]] && [ "${kernel_list_temp[i2]%%-*}" == "$kernel_rc" ]; then
-                kernel_list_temp2[i3]=${kernel_list_temp[i2]}
-                ((i3++))
+            elif [[ "${kernel_list_temp[$i2]}" =~ -rc(0|[1-9][0-9]*)$ ]] && [ "${kernel_list_temp[$i2]%-*}" == "$kernel_rc" ]; then
+                kernel_list_temp2+=("${kernel_list_temp[$i2]}")
                 ((i2++))
-            elif [[ "${kernel_list_temp[i2]}" =~ "rc" ]] && [ "${kernel_list_temp[i2]%%-*}" != "$kernel_rc" ]; then
+            elif [[ "${kernel_list_temp[$i2]}" =~ -rc(0|[1-9][0-9]*)$ ]] && [ "${kernel_list_temp[$i2]%-*}" != "$kernel_rc" ]; then
                 for((i3=0;i3<${#kernel_list_temp2[@]};i3++))
                 do
-                    kernel_list[i]=${kernel_list_temp2[i3]}
-                    ((i++))
+                    kernel_list+=("${kernel_list_temp2[$i3]}")
                 done
                 kernel_rc=""
-                i3=0
-                unset kernel_list_temp2
-            elif version_ge "$kernel_rc" "${kernel_list_temp[i2]}"; then
-                if [ "$kernel_rc" == "${kernel_list_temp[i2]}" ]; then
-                    kernel_list[i]=${kernel_list_temp[i2]}
-                    ((i++))
-                    ((i2++))
-                fi
-                for((i3=0;i3<${#kernel_list_temp2[@]};i3++))
-                do
-                    kernel_list[i]=${kernel_list_temp2[i3]}
-                    ((i++))
-                done
-                kernel_rc=""
-                i3=0
-                unset kernel_list_temp2
+            elif [ -z "$kernel_rc" ] || version_ge "${kernel_list_temp[$i2]}" "$kernel_rc"; then
+                kernel_list+=("${kernel_list_temp[$i2]}")
+                ((i2++))
             else
-                kernel_list[i]=${kernel_list_temp[i2]}
-                ((i++))
-                ((i2++))
+                for((i3=0;i3<${#kernel_list_temp2[@]};i3++))
+                do
+                    kernel_list+=("${kernel_list_temp2[$i3]}")
+                done
+                kernel_rc=""
             fi
         done
-        if [ "$kernel_rc" != "" ]; then
+        if [ -n "$kernel_rc" ]; then
             for((i3=0;i3<${#kernel_list_temp2[@]};i3++))
             do
-                kernel_list[i]=${kernel_list_temp2[i3]}
-                ((i++))
+                kernel_list+=("${kernel_list_temp2[$i3]}")
             done
         fi
-        latest_kernel_version=${kernel_list[0]}
-        your_kernel_version=$(uname -r | cut -d - -f 1)
-        check_fake_version()
-        {
-            local temp=${1##*.}
-            if [ ${temp} -eq 0 ]; then
-                return 0
-            else
-                return 1
-            fi
-        }
-        while check_fake_version ${your_kernel_version}
-        do
-            your_kernel_version=${your_kernel_version%.*}
-        done
+        latest_kernel_version="${kernel_list[0]}"
         if [ $release == "ubuntu" ] || [ $release == "other-debian" ]; then
             local rc_version
-            rc_version=$(uname -r | cut -d - -f 2)
-            if [[ $rc_version =~ "rc" ]]; then
-                rc_version=${rc_version##*'rc'}
-                your_kernel_version=${your_kernel_version}-rc${rc_version}
+            rc_version="$(uname -r | cut -d - -f 2)"
+            if [[ $rc_version =~ rc ]]; then
+                rc_version="${rc_version##*'rc'}"
+                your_kernel_version="${your_kernel_version}-rc${rc_version}"
             fi
             uname -r | grep -q xanmod && your_kernel_version="${your_kernel_version}-xanmod"
         else
-            latest_kernel_version=${latest_kernel_version%%-*}
+            latest_kernel_version="${latest_kernel_version%%-*}"
         fi
     }
     #卸载多余内核
@@ -911,7 +900,7 @@ install_bbr()
             local kernel_list_modules
             kernel_list_modules=($(dpkg --list | awk '{print $2}' | grep '^linux-modules'))
             local kernel_now
-            kernel_now=$(uname -r)
+            kernel_now="$(uname -r)"
             local ok_install=0
             for ((i=${#kernel_list_image[@]}-1;i>=0;i--))
             do
@@ -943,14 +932,14 @@ install_bbr()
             kernel_list=($(rpm -qa |grep '^kernel-[0-9]\|^kernel-ml-[0-9]'))
             local kernel_list_devel
             kernel_list_devel=($(rpm -qa | grep '^kernel-devel\|^kernel-ml-devel'))
-            if version_ge $redhat_version 8; then
+            if version_ge "$redhat_version" 8; then
                 local kernel_list_modules
                 kernel_list_modules=($(rpm -qa |grep '^kernel-modules\|^kernel-ml-modules'))
                 local kernel_list_core
                 kernel_list_core=($(rpm -qa | grep '^kernel-core\|^kernel-ml-core'))
             fi
             local kernel_now
-            kernel_now=$(uname -r)
+            kernel_now="$(uname -r)"
             local ok_install=0
             for ((i=${#kernel_list[@]}-1;i>=0;i--))
             do
@@ -971,7 +960,7 @@ install_bbr()
                     unset 'kernel_list_devel[$i]'
                 fi
             done
-            if version_ge $redhat_version 8; then
+            if version_ge "$redhat_version" 8; then
                 ok_install=0
                 for ((i=${#kernel_list_modules[@]}-1;i>=0;i--))
                 do
@@ -1001,11 +990,11 @@ install_bbr()
                     return 1
                 fi
             fi
-            if ([ ${#kernel_list[@]} -eq 0 ] && [ ${#kernel_list_devel[@]} -eq 0 ]) && (! version_ge $redhat_version 8 || ([ ${#kernel_list_modules[@]} -eq 0 ] && [ ${#kernel_list_core[@]} -eq 0 ])); then
+            if ([ ${#kernel_list[@]} -eq 0 ] && [ ${#kernel_list_devel[@]} -eq 0 ]) && (! version_ge "$redhat_version" 8 || ([ ${#kernel_list_modules[@]} -eq 0 ] && [ ${#kernel_list_core[@]} -eq 0 ])); then
                 yellow "没有内核可卸载"
                 return 0
             fi
-            if version_ge $redhat_version 8; then
+            if version_ge "$redhat_version" 8; then
                 $redhat_package_manager -y remove "${kernel_list[@]}" "${kernel_list_modules[@]}" "${kernel_list_core[@]}" "${kernel_list_devel[@]}"
             else
                 $redhat_package_manager -y remove "${kernel_list[@]}" "${kernel_list_devel[@]}"
@@ -1026,7 +1015,9 @@ install_bbr()
         do
             read -p "您的选择是：" choice
         done
-        local qdisc=${list[((choice-1))]}
+        local qdisc="${list[$((choice-1))]}"
+        local default_qdisc
+        default_qdisc="$(sysctl net.core.default_qdisc | cut -d = -f 2 | awk '{print $1}')"
         sed -i '/^[ \t]*net.core.default_qdisc[ \t]*=/d' /etc/sysctl.conf
         echo "net.core.default_qdisc = $qdisc" >> /etc/sysctl.conf
         sysctl -p
@@ -1090,72 +1081,78 @@ install_bbr()
             tyblue "       ${tcp_congestion_control} \\033[31m(bbr未启用)"
         fi
         tyblue "   当前队列算法："
-        local default_qdisc
-        default_qdisc=$(sysctl net.core.default_qdisc | cut -d = -f 2 | awk '{print $1}')
-        green "       $default_qdisc"
+        green "       $(sysctl net.core.default_qdisc | cut -d = -f 2 | awk '{print $1}')"
         echo
-        choice=""
+        local choice=""
         while [[ ! "$choice" =~ ^(0|[1-9][0-9]*)$ ]] || ((choice>7))
         do
             read -p "您的选择是：" choice
         done
         if [ $choice -eq 1 ]; then
-            sed -i '/^[ \t]*net.core.default_qdisc[ \t]*=/d' /etc/sysctl.conf
-            sed -i '/^[ \t]*net.ipv4.tcp_congestion_control[ \t]*=/d' /etc/sysctl.conf
-            echo 'net.core.default_qdisc = fq' >> /etc/sysctl.conf
-            echo 'net.ipv4.tcp_congestion_control = bbr' >> /etc/sysctl.conf
-            sysctl -p
+            if ! ([ "$(sysctl net.ipv4.tcp_congestion_control | cut -d = -f 2 | awk '{print $1}')" == "bbr" ] && [ "$(grep '^[ '$'\t]*net.ipv4.tcp_congestion_control[ '$'\t]*=' "/etc/sysctl.conf" | tail -n 1 | cut -d = -f 2 | awk '{print $1}')" == "bbr" ] && [ "$(sysctl net.core.default_qdisc | cut -d = -f 2 | awk '{print $1}')" == "$(grep '^[ '$'\t]*net.core.default_qdisc[ '$'\t]*=' "/etc/sysctl.conf" | tail -n 1 | cut -d = -f 2 | awk '{print $1}')" ]); then
+                sed -i '/^[ \t]*net.core.default_qdisc[ \t]*=/d' /etc/sysctl.conf
+                sed -i '/^[ \t]*net.ipv4.tcp_congestion_control[ \t]*=/d' /etc/sysctl.conf
+                echo 'net.core.default_qdisc = fq' >> /etc/sysctl.conf
+                echo 'net.ipv4.tcp_congestion_control = bbr' >> /etc/sysctl.conf
+                sysctl -p
+            fi
             if ! wget -O update-kernel.sh https://github.com/kirin10000/update-kernel/raw/master/update-kernel.sh; then
                 red    "获取内核升级脚本失败"
-                yellow "按回车键继续或者按ctrl+c终止"
+                yellow "按回车键继续或者按Ctrl+c终止"
                 read -s
             fi
             chmod +x update-kernel.sh
             ./update-kernel.sh
-            if ! sysctl net.ipv4.tcp_congestion_control | grep -q "bbr"; then
+            if [ "$(sysctl net.ipv4.tcp_congestion_control | cut -d = -f 2 | awk '{print $1}')" == "bbr" ] && [ "$(sysctl net.core.default_qdisc | cut -d = -f 2 | awk '{print $1}')" == "$(grep '^[ '$'\t]*net.core.default_qdisc[ '$'\t]*=' "/etc/sysctl.conf" | tail -n 1 | cut -d = -f 2 | awk '{print $1}')" ]; then
+                green "--------------------bbr已安装--------------------"
+            else
                 red "开启bbr失败"
                 red "如果刚安装完内核，请先重启"
-                red "如果重启仍然无效，请尝试选择2选项"
-            else
-                green "--------------------bbr已安装--------------------"
+                red "如果重启仍然无效，请尝试选项3"
             fi
         elif [ $choice -eq 2 ]; then
-            sed -i '/^[ \t]*net.core.default_qdisc[ \t]*=/d' /etc/sysctl.conf
-            sed -i '/^[ \t]*net.ipv4.tcp_congestion_control[ \t]*=/d' /etc/sysctl.conf
-            echo 'net.core.default_qdisc = fq' >> /etc/sysctl.conf
-            echo 'net.ipv4.tcp_congestion_control = bbr' >> /etc/sysctl.conf
-            sysctl -p
+            if ! ([ "$(sysctl net.ipv4.tcp_congestion_control | cut -d = -f 2 | awk '{print $1}')" == "bbr" ] && [ "$(grep '^[ '$'\t]*net.ipv4.tcp_congestion_control[ '$'\t]*=' "/etc/sysctl.conf" | tail -n 1 | cut -d = -f 2 | awk '{print $1}')" == "bbr" ] && [ "$(sysctl net.core.default_qdisc | cut -d = -f 2 | awk '{print $1}')" == "$(grep '^[ '$'\t]*net.core.default_qdisc[ '$'\t]*=' "/etc/sysctl.conf" | tail -n 1 | cut -d = -f 2 | awk '{print $1}')" ]); then
+                sed -i '/^[ \t]*net.core.default_qdisc[ \t]*=/d' /etc/sysctl.conf
+                sed -i '/^[ \t]*net.ipv4.tcp_congestion_control[ \t]*=/d' /etc/sysctl.conf
+                echo 'net.core.default_qdisc = fq' >> /etc/sysctl.conf
+                echo 'net.ipv4.tcp_congestion_control = bbr' >> /etc/sysctl.conf
+                sysctl -p
+            fi
             if ! wget -O xanmod-install.sh https://github.com/kirin10000/xanmod-install/raw/main/xanmod-install.sh; then
                 red    "获取xanmod内核安装脚本失败"
-                yellow "按回车键继续或者按ctrl+c终止"
+                yellow "按回车键继续或者按Ctrl+c终止"
                 read -s
             fi
             chmod +x xanmod-install.sh
             ./xanmod-install.sh
-            if ! sysctl net.ipv4.tcp_congestion_control | grep -q "bbr"; then
+            if [ "$(sysctl net.ipv4.tcp_congestion_control | cut -d = -f 2 | awk '{print $1}')" == "bbr" ] && [ "$(sysctl net.core.default_qdisc | cut -d = -f 2 | awk '{print $1}')" == "$(grep '^[ '$'\t]*net.core.default_qdisc[ '$'\t]*=' "/etc/sysctl.conf" | tail -n 1 | cut -d = -f 2 | awk '{print $1}')" ]; then
+                green "--------------------bbr已安装--------------------"
+            else
                 red "开启bbr失败"
                 red "如果刚安装完内核，请先重启"
-                red "如果重启仍然无效，请尝试选择2选项"
-            else
-                green "--------------------bbr已安装--------------------"
+                red "如果重启仍然无效，请尝试选项3"
             fi
         elif [ $choice -eq 3 ]; then
-            sed -i '/^[ \t]*net.core.default_qdisc[ \t]*=/d' /etc/sysctl.conf
-            sed -i '/^[ \t]*net.ipv4.tcp_congestion_control[ \t]*=/d' /etc/sysctl.conf
-            echo 'net.core.default_qdisc = fq' >> /etc/sysctl.conf
-            echo 'net.ipv4.tcp_congestion_control = bbr' >> /etc/sysctl.conf
-            sysctl -p
-            sleep 1s
-            if ! sysctl net.ipv4.tcp_congestion_control | grep -wq "bbr"; then
-                if ! wget -O bbr.sh https://github.com/teddysun/across/raw/master/bbr.sh; then
-                    red    "获取bbr脚本失败"
-                    yellow "按回车键继续或者按ctrl+c终止"
-                    read -s
-                fi
-                chmod +x bbr.sh
-                ./bbr.sh
-            else
+            if [ "$(sysctl net.ipv4.tcp_congestion_control | cut -d = -f 2 | awk '{print $1}')" == "bbr" ] && [ "$(grep '^[ '$'\t]*net.ipv4.tcp_congestion_control[ '$'\t]*=' "/etc/sysctl.conf" | tail -n 1 | cut -d = -f 2 | awk '{print $1}')" == "bbr" ] && [ "$(sysctl net.core.default_qdisc | cut -d = -f 2 | awk '{print $1}')" == "$(grep '^[ '$'\t]*net.core.default_qdisc[ '$'\t]*=' "/etc/sysctl.conf" | tail -n 1 | cut -d = -f 2 | awk '{print $1}')" ]; then
                 green "--------------------bbr已安装--------------------"
+            else
+                sed -i '/^[ \t]*net.core.default_qdisc[ \t]*=/d' /etc/sysctl.conf
+                sed -i '/^[ \t]*net.ipv4.tcp_congestion_control[ \t]*=/d' /etc/sysctl.conf
+                echo 'net.core.default_qdisc = fq' >> /etc/sysctl.conf
+                echo 'net.ipv4.tcp_congestion_control = bbr' >> /etc/sysctl.conf
+                sysctl -p
+                sleep 1s
+                if [ "$(sysctl net.ipv4.tcp_congestion_control | cut -d = -f 2 | awk '{print $1}')" == "bbr" ] && [ "$(sysctl net.core.default_qdisc | cut -d = -f 2 | awk '{print $1}')" == "fq" ]; then
+                    green "--------------------bbr已安装--------------------"
+                else
+                    if ! wget -O bbr.sh https://github.com/teddysun/across/raw/master/bbr.sh; then
+                        red    "获取bbr脚本失败"
+                        yellow "按回车键继续或者按Ctrl+c终止"
+                        read -s
+                    fi
+                    chmod +x bbr.sh
+                    ./bbr.sh
+                fi
             fi
         elif [ $choice -eq 4 ]; then
             tyblue "--------------------即将安装bbr2加速，安装完成后服务器将会重启--------------------"
@@ -1170,7 +1167,7 @@ install_bbr()
             fi
             if ! wget -O bbr2.sh $temp_bbr2; then
                 red    "获取bbr2脚本失败"
-                yellow "按回车键继续或者按ctrl+c终止"
+                yellow "按回车键继续或者按Ctrl+c终止"
                 read -s
             fi
             chmod +x bbr2.sh
@@ -1178,7 +1175,7 @@ install_bbr()
         elif [ $choice -eq 5 ]; then
             if ! wget -O tcp.sh "https://raw.githubusercontent.com/chiakge/Linux-NetSpeed/master/tcp.sh"; then
                 red    "获取脚本失败"
-                yellow "按回车键继续或者按ctrl+c终止"
+                yellow "按回车键继续或者按Ctrl+c终止"
                 read -s
             fi
             chmod +x tcp.sh
@@ -1250,15 +1247,21 @@ readPretend()
     do
         echo -e "\\n\\n\\n"
         tyblue "------------------------------请选择要伪装的网站页面------------------------------"
-        tyblue " 1. Cloudreve(个人网盘) \\033[32m(推荐)"
-        tyblue " 2. Nextcloud(个人网盘，需安装php) \\033[32m(推荐)"
-        tyblue " 3. 403页面 (模拟网站后台)"
-        tyblue " 4. 自定义静态网站 (默认是Nextcloud登陆界面，如果选择，建议自行更换)"
-        yellow " 5. 自定义反向代理网页 (不推荐)"
+        tyblue " 1. Cloudreve \\033[32m(推荐)"
+        purple "     个人网盘"
+        tyblue " 2. Nextcloud \\033[32m(推荐)"
+        purple "     个人网盘，需安装php"
+        tyblue " 3. 403页面"
+        purple "     模拟网站后台"
+        tyblue " 4. 自定义静态网站"
+        purple "     不建议小白选择，默认为Nextcloud登陆界面，强烈建议自行更换"
+        tyblue " 5. 自定义反向代理网页 \033[31m(不推荐)"
         echo
-        green  " 内存<128MB建议选择 403页面"
-        green  " 128MB<=内存<1G建议选择 Cloudreve"
-        green  " 内存>=1G建议选择 Nextcloud 或 Cloudreve"
+        green  " 内存<128MB 建议选择 403页面"
+        green  " 128MB<=内存<1G 建议选择 Cloudreve"
+        green  " 内存>=1G 建议选择 Nextcloud 或 Cloudreve"
+        echo
+        yellow " 关于选择伪装网站的详细说明见：https://github.com/kirin10000/Xray-script#伪装网站说明"
         echo
         pretend=""
         while [[ "$pretend" != "1" && "$pretend" != "2" && "$pretend" != "3" && "$pretend" != "4" && "$pretend" != "5" ]]
@@ -1273,7 +1276,7 @@ readPretend()
                 queren=0
             fi
         elif [ $pretend -eq 2 ]; then
-            if ([ $release == "centos" ] || [ $release == "fedora" ] || [ $release == "other-redhat" ]) && ! version_ge $redhat_version 8; then
+            if ([ $release == "centos" ] || [ $release == "fedora" ] || [ $release == "other-redhat" ]) && ! version_ge "$redhat_version" 8; then
                 red "不支持在 Red Hat版本<8 的 Red Hat基 系统上安装php"
                 yellow "如：CentOS<8 Fedora<30 的版本"
                 sleep 3s
@@ -1353,25 +1356,25 @@ readDomain()
 install_base_dependence()
 {
     if [ $release == "centos" ] || [ $release == "fedora" ] || [ $release == "other-redhat" ]; then
-        install_dependence wget unzip curl openssl crontabs gcc gcc-c++ make
+        install_dependence net-tools redhat-lsb-core ca-certificates wget unzip curl openssl crontabs gcc gcc-c++ make
     else
-        install_dependence wget unzip curl openssl cron gcc g++ make
+        install_dependence net-tools lsb-release ca-certificates wget unzip curl openssl cron gcc g++ make
     fi
 }
 install_nginx_dependence()
 {
     if [ $release == "centos" ] || [ $release == "fedora" ] || [ $release == "other-redhat" ]; then
-        install_dependence gperftools-devel libatomic_ops-devel pcre-devel libxml2-devel libxslt-devel zlib-devel gd-devel perl-ExtUtils-Embed perl-Data-Dumper perl-IPC-Cmd geoip-devel lksctp-tools-devel
+        install_dependence perl-IPC-Cmd perl-Getopt-Long perl-Data-Dumper pcre-devel zlib-devel libxml2-devel libxslt-devel gd-devel geoip-devel perl-ExtUtils-Embed gperftools-devel libatomic_ops-devel perl-devel
     else
-        install_dependence libgoogle-perftools-dev libatomic-ops-dev libperl-dev libxml2-dev libxslt1-dev zlib1g-dev libpcre3-dev libgeoip-dev libgd-dev libsctp-dev
+        install_dependence libpcre3-dev zlib1g-dev libxml2-dev libxslt1-dev libgd-dev libgeoip-dev libgoogle-perftools-dev libatomic-ops-dev libperl-dev
     fi
 }
 install_php_dependence()
 {
     if [ $release == "centos" ] || [ $release == "fedora" ] || [ $release == "other-redhat" ]; then
-        install_dependence pkgconf-pkg-config libxml2-devel sqlite-devel systemd-devel libacl-devel openssl-devel krb5-devel pcre2-devel zlib-devel bzip2-devel libcurl-devel gdbm-devel libdb-devel tokyocabinet-devel lmdb-devel enchant-devel libffi-devel libpng-devel gd-devel libwebp-devel libjpeg-turbo-devel libXpm-devel freetype-devel gmp-devel libc-client-devel libicu-devel openldap-devel oniguruma-devel unixODBC-devel freetds-devel libpq-devel aspell-devel libedit-devel net-snmp-devel libsodium-devel libargon2-devel libtidy-devel libxslt-devel libzip-devel autoconf git ImageMagick-devel sudo
+        install_dependence pkgconf-pkg-config libxml2-devel sqlite-devel systemd-devel libacl-devel openssl-devel krb5-devel pcre2-devel zlib-devel bzip2-devel libcurl-devel gdbm-devel libdb-devel tokyocabinet-devel lmdb-devel enchant-devel libffi-devel libpng-devel gd-devel libwebp-devel libjpeg-turbo-devel libXpm-devel freetype-devel gmp-devel libc-client-devel libicu-devel openldap-devel oniguruma-devel unixODBC-devel freetds-devel libpq-devel aspell-devel libedit-devel net-snmp-devel libsodium-devel libargon2-devel libtidy-devel libxslt-devel libzip-devel autoconf git ImageMagick-devel
     else
-        install_dependence pkg-config libxml2-dev libsqlite3-dev libsystemd-dev libacl1-dev libapparmor-dev libssl-dev libkrb5-dev libpcre2-dev zlib1g-dev libbz2-dev libcurl4-openssl-dev libqdbm-dev libdb-dev libtokyocabinet-dev liblmdb-dev libenchant-dev libffi-dev libpng-dev libgd-dev libwebp-dev libjpeg-dev libxpm-dev libfreetype6-dev libgmp-dev libc-client2007e-dev libicu-dev libldap2-dev libsasl2-dev libonig-dev unixodbc-dev freetds-dev libpq-dev libpspell-dev libedit-dev libmm-dev libsnmp-dev libsodium-dev libargon2-dev libtidy-dev libxslt1-dev libzip-dev autoconf git libmagickwand-dev sudo
+        install_dependence pkg-config libxml2-dev libsqlite3-dev libsystemd-dev libacl1-dev libapparmor-dev libssl-dev libkrb5-dev libpcre2-dev zlib1g-dev libbz2-dev libcurl4-openssl-dev libqdbm-dev libdb-dev libtokyocabinet-dev liblmdb-dev libenchant-dev libffi-dev libpng-dev libgd-dev libwebp-dev libjpeg-dev libxpm-dev libfreetype6-dev libgmp-dev libc-client2007e-dev libicu-dev libldap2-dev libsasl2-dev libonig-dev unixodbc-dev freetds-dev libpq-dev libpspell-dev libedit-dev libmm-dev libsnmp-dev libsodium-dev libargon2-dev libtidy-dev libxslt1-dev libzip-dev autoconf git libmagickwand-dev
     fi
 }
 
@@ -1381,7 +1384,7 @@ compile_php()
     green "正在编译php。。。。"
     if ! wget -O "${php_version}.tar.xz" "https://www.php.net/distributions/${php_version}.tar.xz"; then
         red    "获取php失败"
-        yellow "按回车键继续或者按ctrl+c终止"
+        yellow "按回车键继续或者按Ctrl+c终止"
         read -s
     fi
     tar -xJf "${php_version}.tar.xz"
@@ -1418,7 +1421,7 @@ instal_php_imagick()
 {
     if ! git clone https://github.com/Imagick/imagick; then
         yellow "获取php-imagick源码失败"
-        yellow "按回车键继续或者按ctrl+c终止"
+        yellow "按回车键继续或者按Ctrl+c终止"
         read -s
     fi
     cd imagick
@@ -1430,7 +1433,7 @@ instal_php_imagick()
         yellow "php-imagick编译失败"
         green  "欢迎进行Bug report(https://github.com/kirin10000/Xray-script/issues)，感谢您的支持"
         yellow "在Bug修复前，建议使用Ubuntu最新版系统"
-        yellow "按回车键继续或者按ctrl+c终止"
+        yellow "按回车键继续或者按Ctrl+c终止"
         read -s
     else
         swap_off
@@ -1475,19 +1478,19 @@ compile_nginx()
     green "正在编译Nginx。。。。"
     if ! wget -O ${nginx_version}.tar.gz https://nginx.org/download/${nginx_version}.tar.gz; then
         red    "获取nginx失败"
-        yellow "按回车键继续或者按ctrl+c终止"
+        yellow "按回车键继续或者按Ctrl+c终止"
         read -s
     fi
     tar -zxf ${nginx_version}.tar.gz
     if ! wget -O ${openssl_version}.tar.gz https://github.com/openssl/openssl/archive/${openssl_version#*-}.tar.gz; then
         red    "获取openssl失败"
-        yellow "按回车键继续或者按ctrl+c终止"
+        yellow "按回车键继续或者按Ctrl+c终止"
         read -s
     fi
     tar -zxf ${openssl_version}.tar.gz
     cd ${nginx_version}
     sed -i "s/OPTIMIZE[ \\t]*=>[ \\t]*'-O'/OPTIMIZE          => '-O3'/g" src/http/modules/perl/Makefile.PL
-    ./configure --prefix=/usr/local/nginx --with-openssl=../$openssl_version --with-openssl-opt="enable-ec_nistp_64_gcc_128 shared threads zlib-dynamic sctp" --with-mail=dynamic --with-mail_ssl_module --with-stream=dynamic --with-stream_ssl_module --with-stream_realip_module --with-stream_geoip_module=dynamic --with-stream_ssl_preread_module --with-http_ssl_module --with-http_v2_module --with-http_realip_module --with-http_addition_module --with-http_xslt_module=dynamic --with-http_image_filter_module=dynamic --with-http_geoip_module=dynamic --with-http_sub_module --with-http_dav_module --with-http_flv_module --with-http_mp4_module --with-http_gunzip_module --with-http_gzip_static_module --with-http_auth_request_module --with-http_random_index_module --with-http_secure_link_module --with-http_degradation_module --with-http_slice_module --with-http_stub_status_module --with-http_perl_module=dynamic --with-pcre --with-libatomic --with-compat --with-cpp_test_module --with-google_perftools_module --with-file-aio --with-threads --with-poll_module --with-select_module --with-cc-opt="-Wno-error -g0 -O3"
+    ./configure --prefix=/usr/local/nginx --with-openssl=../$openssl_version --with-mail=dynamic --with-mail_ssl_module --with-stream=dynamic --with-stream_ssl_module --with-stream_realip_module --with-stream_geoip_module=dynamic --with-stream_ssl_preread_module --with-http_ssl_module --with-http_v2_module --with-http_realip_module --with-http_addition_module --with-http_xslt_module=dynamic --with-http_image_filter_module=dynamic --with-http_geoip_module=dynamic --with-http_sub_module --with-http_dav_module --with-http_flv_module --with-http_mp4_module --with-http_gunzip_module --with-http_gzip_static_module --with-http_auth_request_module --with-http_random_index_module --with-http_secure_link_module --with-http_degradation_module --with-http_slice_module --with-http_stub_status_module --with-http_perl_module=dynamic --with-pcre --with-libatomic --with-compat --with-cpp_test_module --with-google_perftools_module --with-file-aio --with-threads --with-poll_module --with-select_module --with-cc-opt="-Wno-error -g0 -O3"
     swap_on 480
     if ! make; then
         swap_off
@@ -1623,7 +1626,7 @@ install_update_xray()
     green "正在安装/更新Xray。。。。"
     if ! bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install -u root --without-geodata && ! bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install -u root --without-geodata; then
         red    "安装/更新Xray失败"
-        yellow "按回车键继续或者按ctrl+c终止"
+        yellow "按回车键继续或者按Ctrl+c终止"
         read -s
         return 1
     fi
@@ -2007,7 +2010,7 @@ init_web()
     [ ${pretend_list[$1]} -eq 2 ] && info="Nextcloud" || info="网站模板"
     if ! wget -O "${nginx_prefix}/html/Website.zip" "$url"; then
         red    "获取${info}失败"
-        yellow "按回车键继续或者按ctrl+c终止"
+        yellow "按回车键继续或者按Ctrl+c终止"
         read -s
     fi
     rm -rf "${nginx_prefix}/html/${true_domain_list[$1]}"
@@ -2035,7 +2038,7 @@ update_cloudreve()
 {
     if ! wget -O cloudreve.tar.gz "https://github.com/cloudreve/Cloudreve/releases/download/${cloudreve_version}/cloudreve_${cloudreve_version}_linux_${machine}.tar.gz"; then
         red "获取Cloudreve失败！！"
-        yellow "按回车键继续或者按ctrl+c终止"
+        yellow "按回车键继续或者按Ctrl+c终止"
         read -s
     fi
     tar -zxf cloudreve.tar.gz
@@ -2098,16 +2101,50 @@ let_init_nextcloud()
     tyblue " 3.建议不勾选\"安装推荐的应用\"，因为进去之后还能再安装"
     sleep 15s
     echo -e "\\n\\n"
-    yellow "请在确认完成初始化后(能看到欢迎的界面)，再按两次回车键以继续。。。"
+    tyblue "按两次回车键以继续。。。"
     read -s
     read -s
     echo
-    sleep 3s
-    cd "${nginx_prefix}/html/${true_domain_list[$1]}"
-    sudo -u www-data ${php_prefix}/bin/php occ db:add-missing-indices
-    cd -
 }
 
+print_share_link()
+{
+    if [ $protocol_1 -eq 1 ]; then
+        local ip=""
+        while [ -z "$ip" ]
+        do
+            read -p "请输入您的VPS IP：" ip
+        done
+    fi
+    echo
+    tyblue "分享链接："
+    if [ $protocol_1 -eq 1 ]; then
+        green  "VLESS-TCP+XTLS\\033[35m(不走CDN)\\033[32m："
+        yellow " Linux/安卓/路由器："
+        for i in ${!domain_list[@]}
+        do
+            tyblue " vless://${xid_1}@${ip}:443?security=xtls&sni=${domain_list[$i]}&flow=xtls-rprx-splice"
+        done
+        yellow " 其他："
+        for i in ${!domain_list[@]}
+        do
+            tyblue " vless://${xid_1}@${ip}:443?security=xtls&sni=${domain_list[$i]}&flow=xtls-rprx-direct"
+        done
+    fi
+    if [ $protocol_2 -eq 1 ]; then
+        green  "VLESS-WebSocket+TLS\\033[35m(有CDN则走CDN，否则直连)\\033[32m："
+        for i in ${!domain_list[@]}
+        do
+            tyblue "vless://${xid_2}@${domain_list[$i]}:443?type=ws&security=tls&path=%2F${path#/}"
+        done
+    elif [ $protocol_2 -eq 2 ]; then
+        green  "VMess-WebSocket+TLS\\033[35m(有CDN则走CDN，否则直连)\\033[32m："
+        for i in ${!domain_list[@]}
+        do
+            tyblue "vmess://${xid_2}@${domain_list[$i]}:443?type=ws&security=tls&path=%2F${path#/}"
+        done
+    fi
+}
 print_config_info()
 {
     echo -e "\\n\\n\\n"
@@ -2139,13 +2176,13 @@ print_config_info()
         purple "   (Qv2ray:允许不安全的证书(不打勾);Shadowrocket:允许不安全(关闭))"
         tyblue " ------------------------其他-----------------------"
         tyblue "  Mux(多路复用)                 ：使用XTLS必须关闭;不使用XTLS也建议关闭"
-        tyblue "  Sniffing(流量探测)            ：建议开启"
+        tyblue "  socks入站的Sniffing(流量探测) ：建议开启"
         purple "   (Qv2ray:首选项-入站设置-SOCKS设置-嗅探)"
         tyblue "------------------------------------------------------------------------"
     fi
     if [ $protocol_2 -ne 0 ]; then
         echo
-        tyblue "-------------- Xray-WebSocket+TLS+Web (如果有CDN，会走CDN) -------------"
+        tyblue "------------ Xray-WebSocket+TLS+Web (有CDN则走CDN，否则直连) -----------"
         if [ $protocol_2 -eq 1 ]; then
             tyblue " 服务器类型            ：VLESS"
         else
@@ -2181,10 +2218,12 @@ print_config_info()
         purple "   (Qv2ray:允许不安全的证书(不打勾);Shadowrocket:允许不安全(关闭))"
         tyblue " ------------------------其他-----------------------"
         tyblue "  Mux(多路复用)                 ：建议关闭"
-        tyblue "  Sniffing(流量探测)            ：建议开启"
+        tyblue "  socks入站的Sniffing(流量探测) ：建议开启"
         purple "   (Qv2ray:首选项-入站设置-SOCKS设置-嗅探)"
         tyblue "------------------------------------------------------------------------"
     fi
+    echo
+    ask_if "是否生成分享链接？(y/n)" && print_share_link
     echo
     green  " 目前支持支持XTLS的图形化客户端："
     green  "   Windows    ：Qv2ray       v2.7.0-pre1+    V2RayN  v3.26+"
@@ -2373,12 +2412,12 @@ install_update_xray_tls_web()
             systemctl --now disable cloudreve
         fi
         green "-------------------安装完成-------------------"
+        print_config_info
     else
         [ $cloudreve_is_installed -eq 1 ] && update_cloudreve
         turn_on_off_cloudreve
         green "-------------------更新完成-------------------"
     fi
-    print_config_info
     cd /
     rm -rf "$temp_dir"
 }
@@ -2404,7 +2443,6 @@ update_script()
         yellow "按回车键继续或Ctrl+c中止"
         read -s
     fi
-    chmod +x "${BASH_SOURCE[0]}"
 }
 full_install_php()
 {
@@ -2732,6 +2770,7 @@ change_xray_path()
     config_xray
     systemctl -q is-active xray && systemctl restart xray
     green "更换成功！！"
+    print_config_info
 }
 change_xray_protocol()
 {
@@ -2750,13 +2789,10 @@ change_xray_protocol()
     config_xray
     systemctl -q is-active xray && systemctl restart xray
     green "更换成功！！"
+    print_config_info
 }
 simplify_system()
 {
-    if [ $release == "centos" ] || [ $release == "fedora" ] || [ $release == "other-redhat" ]; then
-        yellow "该功能仅对Debian基系统(Ubuntu Debian deepin等)开放"
-        return 1
-    fi
     if systemctl -q is-active xray || systemctl -q is-active nginx || systemctl -q is-active php-fpm; then
         yellow "请先停止Xray-TLS+Web"
         return 1
@@ -2764,13 +2800,25 @@ simplify_system()
     yellow "警告：如果服务器上有运行别的程序，可能会被误删"
     tyblue "建议在纯净系统下使用此功能"
     ! ask_if "是否要继续?(y/n)" && return 0
-    $debian_package_manager -y --autoremove purge openssl snapd kdump-tools fwupd flex open-vm-tools make automake '^cloud-init' libffi-dev pkg-config
-    $debian_package_manager -y -f install
+    if [ $release == "centos" ] || [ $release == "fedora" ] || [ $release == "other-redhat" ]; then
+        $redhat_package_manager -y remove openssl "perl*"
+    else
+        local temp_remove_list=('openssl' 'snapd' 'kdump-tools' 'flex' 'make' 'automake' '^cloud-init' 'pkg-config' '^gcc-[1-9][0-9]*$' 'libffi-dev' '^cpp-[1-9][0-9]*$' 'curl' '^python' '^libpython' 'dbus' 'cron' 'at' 'open-iscsi' 'rsyslog' 'anacron' 'acpid')
+        if ! $debian_package_manager -y --autoremove purge "${temp_remove_list[@]}"; then
+            $debian_package_manager -y -f install
+            for i in ${!temp_remove_list[@]}
+            do
+                $debian_package_manager -y --autoremove purge "${temp_remove_list[$i]}"
+            done
+            $debian_package_manager -y -f install
+        fi
+        [ $release == "ubuntu" ] && check_important_dependence_installed netplan.io
+    fi
     check_important_dependence_installed openssh-server openssh-server
-    check_important_dependence_installed ca-certificates ca-certificates
     [ $nginx_is_installed -eq 1 ] && install_nginx_dependence
     [ $php_is_installed -eq 1 ] && install_php_dependence
     [ $is_installed -eq 1 ] && install_base_dependence
+    green "精简完成"
 }
 repair_tuige()
 {
@@ -2898,7 +2946,7 @@ start_menu()
         red "请先启动Xray-TLS+Web！！"
         return 1
     fi
-    (( 4<=choice&&choice<=6 )) && check_important_dependence_installed lsb-release redhat-lsb-core
+    (( 4<=choice&&choice<=6 || choice==24 )) && check_important_dependence_installed lsb-release redhat-lsb-core
     if (( choice==3 || choice==5 || choice==6 || choice==10 )); then
         check_important_dependence_installed ca-certificates ca-certificates
         if [ $choice -eq 10 ]; then
